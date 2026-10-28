@@ -89,7 +89,6 @@ struct
 	AdapterOption Adapter;
 } Options;
 vector<tuple<int, int, int, int>> monitorModes;
-vector< DISPLAYCONFIG_VIDEO_SIGNAL_INFO> s_KnownMonitorModes2;
 UINT numVirtualDisplays;
 wstring gpuname;
 wstring confpath = L"C:\\VirtualDisplayDriver";
@@ -2749,9 +2748,6 @@ NTSTATUS VirtualDisplayDriverParseMonitorDescription(const IDARG_IN_PARSEMONITOR
 	logStream << "Parsing monitor description. Input buffer count: " << pInArgs->MonitorModeBufferInputCount;
 	vddlog("d", logStream.str().c_str());
 
-	for (int i = 0; i < monitorModes.size(); i++) {
-		s_KnownMonitorModes2.push_back(dispinfo(std::get<0>(monitorModes[i]), std::get<1>(monitorModes[i]), std::get<2>(monitorModes[i]), std::get<3>(monitorModes[i])));
-	}
 	pOutArgs->MonitorModeBufferOutputCount = (UINT)monitorModes.size();
 
 	logStream.str("");
@@ -2773,7 +2769,7 @@ NTSTATUS VirtualDisplayDriverParseMonitorDescription(const IDARG_IN_PARSEMONITOR
 		{
 			pInArgs->pMonitorModes[ModeIndex].Size = sizeof(IDDCX_MONITOR_MODE);
 			pInArgs->pMonitorModes[ModeIndex].Origin = IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR;
-			pInArgs->pMonitorModes[ModeIndex].MonitorVideoSignalInfo = s_KnownMonitorModes2[ModeIndex];
+			pInArgs->pMonitorModes[ModeIndex].MonitorVideoSignalInfo = dispinfo(std::get<0>(monitorModes[ModeIndex]), std::get<1>(monitorModes[ModeIndex]), std::get<2>(monitorModes[ModeIndex]), std::get<3>(monitorModes[ModeIndex]));
 		}
 
 		// Set the preferred mode as represented in the EDID
@@ -3006,9 +3002,6 @@ NTSTATUS VirtualDisplayDriverEvtIddCxParseMonitorDescription2(
 	}
 	vddlog("d", logStream.str().c_str());
 
-	for (int i = 0; i < monitorModes.size(); i++) {
-		s_KnownMonitorModes2.push_back(dispinfo(std::get<0>(monitorModes[i]), std::get<1>(monitorModes[i]), std::get<2>(monitorModes[i]), std::get<3>(monitorModes[i])));
-	}
 	pOutArgs->MonitorModeBufferOutputCount = (UINT)monitorModes.size();
 
 	if (pInArgs->MonitorModeBufferInputCount < monitorModes.size())
@@ -3025,7 +3018,7 @@ NTSTATUS VirtualDisplayDriverEvtIddCxParseMonitorDescription2(
 		{
 			pInArgs->pMonitorModes[ModeIndex].Size = sizeof(IDDCX_MONITOR_MODE2);
 			pInArgs->pMonitorModes[ModeIndex].Origin = IDDCX_MONITOR_MODE_ORIGIN_MONITORDESCRIPTOR;
-			pInArgs->pMonitorModes[ModeIndex].MonitorVideoSignalInfo = s_KnownMonitorModes2[ModeIndex];
+			pInArgs->pMonitorModes[ModeIndex].MonitorVideoSignalInfo = dispinfo(std::get<0>(monitorModes[ModeIndex]), std::get<1>(monitorModes[ModeIndex]), std::get<2>(monitorModes[ModeIndex]), std::get<3>(monitorModes[ModeIndex]));
 
 			pInArgs->pMonitorModes[ModeIndex].BitsPerComponent.Rgb = SDRCOLOUR | HDRCOLOUR;
 
