@@ -12,7 +12,9 @@
 #include <avrt.h>
 #include <wrl.h>
 
+#include <map>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "Trace.h"
@@ -51,25 +53,53 @@ namespace Microsoft
 
         /// <summary>
         /// Manages a thread that consumes buffers from an indirect display swap-chain object.
+        /// The Direct3D device is created on that thread, not in the IddCx DDI callback, because IddCx reports a
+        /// driver failure and terminates the host process if AssignSwapChain/UnassignSwapChain exceed its watchdog
+        /// timeout (5 s by default).
         /// </summary>
         class SwapChainProcessor
         {
         public:
-            SwapChainProcessor(IDDCX_SWAPCHAIN hSwapChain, std::shared_ptr<Direct3DDevice> Device, HANDLE NewFrameEvent);
+            SwapChainProcessor(IDDCX_SWAPCHAIN hSwapChain, LUID RenderAdapter, HANDLE NewFrameEvent);
             ~SwapChainProcessor();
+
+            // Signals the processing thread to stop without waiting for it. The thread keeps ownership of the
+            // swap-chain and deletes it when it exits.
+            void RequestStop();
+            // For EvtIddCxMonitorUnassignSwapChain: hands the swap-chain back to IddCx (which deletes it after the
+            // callback) and returns once the thread no longer uses it, waiting at most LoopExitBudgetMs.
+            void StopForUnassign();
+            // True once the processing thread has exited (or was never started).
+            bool HasExited() const;
 
         private:
             static DWORD CALLBACK RunThread(LPVOID Argument);
 
             void Run();
             void RunCore();
+            // Deletes the swap-chain unless it was handed back to IddCx, and signals loop exit and release.
+            void ReleaseSwapChain();
+
+            // StopForUnassign() waits for at most one of these; both are well below the IddCx DDI watchdog
+            // (5000 ms by default).
+            static constexpr DWORD LoopExitBudgetMs = 3000;
+            static constexpr DWORD ReleaseBudgetMs = 3000;
 
         public:
             IDDCX_SWAPCHAIN m_hSwapChain;
+            LUID m_RenderAdapter;
             std::shared_ptr<Direct3DDevice> m_Device;
             HANDLE m_hAvailableBufferEvent;
             Microsoft::WRL::Wrappers::Thread m_hThread;
             Microsoft::WRL::Wrappers::Event m_hTerminateEvent;
+
+        private:
+            std::mutex m_StateLock;
+            bool m_Revoked = false;        // swap-chain handed back to IddCx by StopForUnassign()
+            bool m_InLoop = false;         // thread may be calling IddCx swap-chain functions
+            bool m_SelfReleasing = false;  // thread decided to delete the swap-chain itself
+            Microsoft::WRL::Wrappers::Event m_hLoopExitedEvent;
+            Microsoft::WRL::Wrappers::Event m_hReleasedEvent;
         };
 
         /// <summary>
@@ -87,16 +117,26 @@ namespace Microsoft
             void CreateMonitor(unsigned int index);
 
             void AssignSwapChain(IDDCX_MONITOR& Monitor, IDDCX_SWAPCHAIN SwapChain, LUID RenderAdapter, HANDLE NewFrameEvent);
-            void UnassignSwapChain();
+            void UnassignSwapChain(IDDCX_MONITOR Monitor);
 
         protected:
+            // Detaches the monitor's current processor (and reaps finished retired ones) under m_ProcessorLock.
+            std::unique_ptr<SwapChainProcessor> TakeProcessingThread(IDDCX_MONITOR Monitor);
+            // Keeps a stopped processor until its thread has exited, without joining it.
+            void RetireProcessor(std::unique_ptr<SwapChainProcessor> Processor);
+            // Destroys retired processors whose threads have exited. Caller holds m_ProcessorLock.
+            void ReapRetiredProcessors();
 
             WDFDEVICE m_WdfDevice;
             IDDCX_ADAPTER m_Adapter;
             IDDCX_MONITOR m_Monitor;
             IDDCX_MONITOR m_Monitor2;
 
-            std::unique_ptr<SwapChainProcessor> m_ProcessingThread;
+            std::mutex m_ProcessorLock;
+            // One processor per monitor: an assignment or unassignment must only affect its own monitor's swap-chain.
+            std::map<IDDCX_MONITOR, std::unique_ptr<SwapChainProcessor>> m_ProcessingThreads;
+            std::vector<std::unique_ptr<SwapChainProcessor>> m_RetiredProcessors;
+            Microsoft::WRL::Wrappers::Event m_hCursorEvent;
 
         public:
             static const DISPLAYCONFIG_VIDEO_SIGNAL_INFO s_KnownMonitorModes[];
